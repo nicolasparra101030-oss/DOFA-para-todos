@@ -1,0 +1,8 @@
+torchgeo>=0.9
+gradio>=4.40
+rasterio
+geopandas
+scikit-learn
+pyyaml
+matplotlib
+pandas

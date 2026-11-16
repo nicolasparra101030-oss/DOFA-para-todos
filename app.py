@@ -1,0 +1,213 @@
+"""DOFA para todos: interfaz tipo asistente (se abre desde Google Colab)."""
+from __future__ import annotations
+
+import gradio as gr
+import numpy as np
+
+from dofa_para_todos import flujo, imagenes, sensores, tareas
+from dofa_para_todos.modelo import TAMANOS
+
+INTRO = """
+# 🛰️ DOFA para todos
+Usa **DOFA**, un modelo de inteligencia artificial para imágenes satelitales, sin escribir código.
+Sigue los pasos en orden. DOFA funciona con cualquier sensor: solo necesita saber **la longitud de onda de cada banda**.
+"""
+
+AYUDA_EJEMPLOS = """
+**¿Qué subir?** Un archivo con polígonos (o puntos) dibujados sobre tu imagen en QGIS, con una columna que diga
+la cobertura de cada uno (por ejemplo `clase`: bosque, pasto, agua). Formatos: GeoJSON, GeoPackage, KML
+o shapefile comprimido en `.zip`. Dibuja **varios polígonos por cobertura**, repartidos por la imagen.
+"""
+
+DETALLES = {"Normal (más rápido)": 1, "Alto (4 veces más lento)": 2, "Muy alto (16 veces más lento)": 4}
+
+
+def _tabla_bandas(sensor, elegidas, manual, ruta_imagen):
+    try:
+        ondas = _ondas(sensor, elegidas, manual, ruta_imagen)
+    except Exception as e:
+        return f"⚠️ {e}"
+    if not ondas:
+        return "Todavía no hay bandas elegidas."
+    nombres = elegidas if sensor in sensores.catalogo() else [f"Banda {i + 1}" for i in range(len(ondas))]
+    filas = "\n".join(f"| {i + 1} | {n.split(' · ')[0]} | {o:g} µm |" for i, (n, o) in enumerate(zip(nombres, ondas)))
+    return f"**Orden que recibirá DOFA** ({len(ondas)} bandas):\n\n| # | Banda | Longitud de onda |\n|---|---|---|\n{filas}"
+
+
+def _ondas(sensor, elegidas, manual, ruta_imagen):
+    if sensor == sensores.MANUAL:
+        return sensores.ondas_manuales(manual)
+    if sensor == sensores.DESDE_IMAGEN:
+        if not ruta_imagen:
+            raise ValueError("Sube la imagen (paso 3) para leer sus longitudes de onda.")
+        ondas = sensores.ondas_desde_metadatos(ruta_imagen)
+        if not ondas:
+            raise ValueError("La imagen no trae longitudes de onda en sus metadatos. Elige la opción manual.")
+        return ondas
+    return sensores.ondas_de_etiquetas(sensor, elegidas or [])
+
+
+def _ruta(archivo):
+    if archivo is None:
+        return None
+    return archivo if isinstance(archivo, str) else getattr(archivo, "name", None)
+
+
+def al_cambiar_sensor(sensor):
+    en_catalogo = sensor in sensores.catalogo()
+    todas, defecto = sensores.opciones_bandas(sensor) if en_catalogo else ([], [])
+    descripcion = sensores.catalogo().get(sensor, {}).get("descripcion", "")
+    if sensor == sensores.MANUAL:
+        descripcion = "Escribe una longitud de onda por banda, en el orden del archivo (µm o nm)."
+    elif sensor == sensores.DESDE_IMAGEN:
+        descripcion = "Se leerán de los metadatos de la imagen (formato ENVI o etiquetas por banda)."
+    return (gr.update(choices=todas, value=defecto, visible=en_catalogo),
+            gr.update(visible=sensor == sensores.MANUAL),
+            descripcion)
+
+
+def al_subir_imagen(archivo, sensor, elegidas, manual):
+    ruta = _ruta(archivo)
+    if not ruta:
+        return "Sube una imagen GeoTIFF.", None, _tabla_bandas(sensor, elegidas, manual, None)
+    try:
+        img = imagenes.leer_imagen(ruta)
+    except Exception as e:
+        return f"⚠️ No pude leer la imagen: {e}", None, ""
+    texto = imagenes.describir(img)
+    try:
+        n = len(_ondas(sensor, elegidas, manual, ruta))
+        if n and n != img.bandas:
+            texto += f"\n\n⚠️ La imagen tiene **{img.bandas} bandas** pero elegiste **{n}**. Ajusta el paso 2."
+        elif n:
+            texto += "\n\n✅ El número de bandas coincide."
+    except Exception:
+        pass
+    vista = (imagenes.vista_color(img) * 255).astype(np.uint8)
+    return texto, vista, _tabla_bandas(sensor, elegidas, manual, ruta)
+
+
+def al_cambiar_tarea(tarea):
+    return gr.update(visible=tarea == flujo.AGRUPAR), gr.update(visible=tarea == flujo.CLASIFICAR)
+
+
+def al_subir_ejemplos(archivo):
+    ruta = _ruta(archivo)
+    if not ruta:
+        return gr.update(choices=[], value=None), ""
+    try:
+        gdf = tareas.leer_ejemplos(ruta)
+    except Exception as e:
+        return gr.update(choices=[], value=None), f"⚠️ No pude leer los ejemplos: {e}"
+    columnas = tareas.columnas_de_clase(gdf)
+    valor = columnas[0] if columnas else None
+    resumen = _resumen_ejemplos(gdf, valor)
+    return gr.update(choices=columnas, value=valor), resumen
+
+
+def _resumen_ejemplos(gdf, columna):
+    if columna is None:
+        return "⚠️ El archivo no tiene columnas con atributos. Agrega una columna con el nombre de la cobertura."
+    conteo = gdf[columna].astype(str).value_counts()
+    filas = "\n".join(f"| {k} | {v} |" for k, v in conteo.items())
+    return f"{len(gdf)} ejemplos encontrados:\n\n| Cobertura | Polígonos |\n|---|---|\n{filas}"
+
+
+def al_cambiar_columna(archivo, columna):
+    ruta = _ruta(archivo)
+    if not ruta or not columna:
+        return ""
+    return _resumen_ejemplos(tareas.leer_ejemplos(ruta), columna)
+
+
+def ejecutar(tarea, sensor, elegidas, manual, archivo, grupos, ejemplos, columna, detalle, tamano,
+             progress=gr.Progress()):
+    ruta = _ruta(archivo)
+    if not ruta:
+        raise gr.Error("Falta la imagen (paso 3).")
+    try:
+        ondas = _ondas(sensor, elegidas, manual, ruta)
+        if not ondas:
+            raise ValueError("Elige las bandas de tu imagen (paso 2).")
+        salida = flujo.ejecutar(
+            ruta, ondas, tarea=tarea, radar=sensores.es_radar(sensor), detalle=DETALLES[detalle],
+            tamano=TAMANOS[tamano], grupos=int(grupos), ruta_ejemplos=_ruta(ejemplos), columna=columna,
+            progreso=lambda f, texto="": progress(f, desc=texto))
+    except ValueError as e:
+        raise gr.Error(str(e))
+    a = salida["archivos"]
+    return a["figura"], salida["informe"], salida["tabla"], [a["geotiff"], a["leyenda"], a["areas"], a["figura"]]
+
+
+def crear_app() -> gr.Blocks:
+    sensor_inicial = sensores.nombres_sensores()[0]
+    todas, defecto = sensores.opciones_bandas(sensor_inicial)
+
+    with gr.Blocks(title="DOFA para todos") as app:
+        gr.Markdown(INTRO)
+
+        with gr.Group():
+            gr.Markdown("### 1 · ¿Qué quieres hacer?")
+            tarea = gr.Radio([flujo.AGRUPAR, flujo.CLASIFICAR], value=flujo.AGRUPAR, show_label=False)
+
+        with gr.Group():
+            gr.Markdown("### 2 · ¿De qué sensor es tu imagen y qué bandas tiene?")
+            with gr.Row():
+                sensor = gr.Dropdown(sensores.nombres_sensores(), value=sensor_inicial, label="Sensor")
+                descripcion = gr.Markdown(sensores.catalogo()[sensor_inicial]["descripcion"])
+            bandas = gr.Dropdown(todas, value=defecto, multiselect=True,
+                                 label="Bandas de tu archivo, en el mismo orden en que están guardadas",
+                                 info="Quita las que tu archivo no tiene. Si el orden es distinto, bórralas y "
+                                      "vuelve a elegirlas en el orden correcto.")
+            manual = gr.Textbox(label="Longitudes de onda (una por banda, en orden)", visible=False,
+                                placeholder="0.665, 0.56, 0.49")
+            with gr.Accordion("Ver el orden y las longitudes de onda que recibirá DOFA", open=False):
+                tabla_bandas = gr.Markdown(_tabla_bandas(sensor_inicial, defecto, "", None))
+
+        with gr.Group():
+            gr.Markdown("### 3 · Sube tu imagen (GeoTIFF)")
+            with gr.Row():
+                imagen = gr.File(label="Imagen", file_types=[".tif", ".tiff"])
+                vista = gr.Image(label="Vista previa", interactive=False, height=280)
+            info_imagen = gr.Markdown()
+
+        with gr.Group():
+            gr.Markdown("### 4 · Opciones de la tarea")
+            with gr.Column(visible=True) as caja_agrupar:
+                grupos = gr.Slider(2, 12, value=5, step=1, label="¿En cuántos grupos quieres dividir la imagen?")
+            with gr.Column(visible=False) as caja_clasificar:
+                gr.Markdown(AYUDA_EJEMPLOS)
+                ejemplos = gr.File(label="Tus ejemplos marcados",
+                                   file_types=[".geojson", ".json", ".gpkg", ".kml", ".zip"])
+                columna = gr.Dropdown([], label="Columna con el nombre de la cobertura")
+                info_ejemplos = gr.Markdown()
+            with gr.Accordion("Opciones avanzadas", open=False):
+                detalle = gr.Radio(list(DETALLES), value="Normal (más rápido)", label="Nivel de detalle del mapa",
+                                   info="Con 'Normal', cada celda del mapa mide 16 × 16 píxeles de la imagen.")
+                tamano = gr.Radio(list(TAMANOS), value=list(TAMANOS)[0], label="Tamaño del modelo DOFA")
+
+        boton = gr.Button("🚀 Ejecutar DOFA", variant="primary", size="lg")
+
+        gr.Markdown("### Resultados")
+        figura = gr.Image(label="Mapa", interactive=False)
+        informe = gr.Markdown()
+        tabla = gr.Dataframe(label="Área por cobertura o grupo", interactive=False)
+        descargas = gr.File(label="Descargar (GeoTIFF para QGIS, leyenda, tabla y figura)", file_count="multiple")
+
+        gr.Markdown("Basado en DOFA (Xiong et al., 2024) y TorchGeo · Código abierto bajo licencia MIT.")
+
+        # Eventos
+        sensor.change(al_cambiar_sensor, sensor, [bandas, manual, descripcion])
+        for comp in (sensor, bandas, manual):
+            comp.change(_tabla_bandas, [sensor, bandas, manual, imagen], tabla_bandas)
+        imagen.change(al_subir_imagen, [imagen, sensor, bandas, manual], [info_imagen, vista, tabla_bandas])
+        tarea.change(al_cambiar_tarea, tarea, [caja_agrupar, caja_clasificar])
+        ejemplos.change(al_subir_ejemplos, ejemplos, [columna, info_ejemplos])
+        columna.change(al_cambiar_columna, [ejemplos, columna], info_ejemplos)
+        boton.click(ejecutar, [tarea, sensor, bandas, manual, imagen, grupos, ejemplos, columna, detalle, tamano],
+                    [figura, informe, tabla, descargas])
+    return app
+
+
+if __name__ == "__main__":
+    crear_app().launch(share=True, debug=True)
