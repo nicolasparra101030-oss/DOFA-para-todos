@@ -20,6 +20,7 @@ o shapefile comprimido en `.zip`. Dibuja **varios polígonos por cobertura**, re
 """
 
 DETALLES = {"Normal (más rápido)": 1, "Alto (4 veces más lento)": 2, "Muy alto (16 veces más lento)": 4}
+SUAVIZADOS = {"Sin suavizar": 0, "Suave (recomendado)": 1, "Fuerte": 3}
 
 
 def _tabla_bandas(sensor, elegidas, manual, ruta_imagen):
@@ -66,6 +67,29 @@ def al_cambiar_sensor(sensor):
             descripcion)
 
 
+def _revisar_bandas(ruta, img, sensor, elegidas, manual):
+    try:
+        n = len(_ondas(sensor, elegidas, manual, ruta))
+    except Exception:
+        return ""
+    if n and n != img.bandas:
+        return f"\n\n⚠️ La imagen tiene **{img.bandas} bandas** pero elegiste **{n}**. Ajusta el paso 2."
+    return "\n\n✅ El número de bandas coincide." if n else ""
+
+
+def al_cambiar_bandas(archivo, sensor, elegidas, manual):
+    """Recalcula el aviso de bandas y la tabla cuando el usuario cambia el sensor o las bandas."""
+    ruta = _ruta(archivo)
+    tabla = _tabla_bandas(sensor, elegidas, manual, ruta)
+    if not ruta:
+        return gr.update(), tabla
+    try:
+        img = imagenes.leer_imagen(ruta)
+    except Exception:
+        return gr.update(), tabla
+    return imagenes.describir(img) + _revisar_bandas(ruta, img, sensor, elegidas, manual), tabla
+
+
 def al_subir_imagen(archivo, sensor, elegidas, manual):
     ruta = _ruta(archivo)
     if not ruta:
@@ -74,15 +98,7 @@ def al_subir_imagen(archivo, sensor, elegidas, manual):
         img = imagenes.leer_imagen(ruta)
     except Exception as e:
         return f"⚠️ No pude leer la imagen: {e}", None, ""
-    texto = imagenes.describir(img)
-    try:
-        n = len(_ondas(sensor, elegidas, manual, ruta))
-        if n and n != img.bandas:
-            texto += f"\n\n⚠️ La imagen tiene **{img.bandas} bandas** pero elegiste **{n}**. Ajusta el paso 2."
-        elif n:
-            texto += "\n\n✅ El número de bandas coincide."
-    except Exception:
-        pass
+    texto = imagenes.describir(img) + _revisar_bandas(ruta, img, sensor, elegidas, manual)
     vista = (imagenes.vista_color(img) * 255).astype(np.uint8)
     return texto, vista, _tabla_bandas(sensor, elegidas, manual, ruta)
 
@@ -121,7 +137,7 @@ def al_cambiar_columna(archivo, columna):
 
 
 def ejecutar(tarea, sensor, elegidas, manual, archivo, grupos, ejemplos, columna, detalle, tamano,
-             progress=gr.Progress()):
+             suavizado="Suave (recomendado)", progress=gr.Progress()):
     ruta = _ruta(archivo)
     if not ruta:
         raise gr.Error("Falta la imagen (paso 3).")
@@ -132,6 +148,7 @@ def ejecutar(tarea, sensor, elegidas, manual, archivo, grupos, ejemplos, columna
         salida = flujo.ejecutar(
             ruta, ondas, tarea=tarea, radar=sensores.es_radar(sensor), detalle=DETALLES[detalle],
             tamano=TAMANOS[tamano], grupos=int(grupos), ruta_ejemplos=_ruta(ejemplos), columna=columna,
+            suavizado=SUAVIZADOS[suavizado],
             progreso=lambda f, texto="": progress(f, desc=texto))
     except ValueError as e:
         raise gr.Error(str(e))
@@ -174,7 +191,8 @@ def crear_app() -> gr.Blocks:
         with gr.Group():
             gr.Markdown("### 4 · Opciones de la tarea")
             with gr.Column(visible=True) as caja_agrupar:
-                grupos = gr.Slider(2, 12, value=5, step=1, label="¿En cuántos grupos quieres dividir la imagen?")
+                grupos = gr.Slider(2, 12, value=5, step=1, label="¿En cuántos grupos quieres dividir la imagen?",
+                                   info="En ciudades o zonas muy variadas, de 4 a 6 grupos suele dar mapas más limpios.")
             with gr.Column(visible=False) as caja_clasificar:
                 gr.Markdown(AYUDA_EJEMPLOS)
                 ejemplos = gr.File(label="Tus ejemplos marcados",
@@ -184,6 +202,8 @@ def crear_app() -> gr.Blocks:
             with gr.Accordion("Opciones avanzadas", open=False):
                 detalle = gr.Radio(list(DETALLES), value="Normal (más rápido)", label="Nivel de detalle del mapa",
                                    info="Con 'Normal', cada celda del mapa mide 16 × 16 píxeles de la imagen.")
+                suavizado = gr.Radio(list(SUAVIZADOS), value="Suave (recomendado)", label="Suavizado del mapa",
+                                     info="Quita las celdas sueltas (efecto 'sal y pimienta').")
                 tamano = gr.Radio(list(TAMANOS), value=list(TAMANOS)[0], label="Tamaño del modelo DOFA")
 
         boton = gr.Button("🚀 Ejecutar DOFA", variant="primary", size="lg")
@@ -199,12 +219,13 @@ def crear_app() -> gr.Blocks:
         # Eventos
         sensor.change(al_cambiar_sensor, sensor, [bandas, manual, descripcion])
         for comp in (sensor, bandas, manual):
-            comp.change(_tabla_bandas, [sensor, bandas, manual, imagen], tabla_bandas)
+            comp.change(al_cambiar_bandas, [imagen, sensor, bandas, manual], [info_imagen, tabla_bandas])
         imagen.change(al_subir_imagen, [imagen, sensor, bandas, manual], [info_imagen, vista, tabla_bandas])
         tarea.change(al_cambiar_tarea, tarea, [caja_agrupar, caja_clasificar])
         ejemplos.change(al_subir_ejemplos, ejemplos, [columna, info_ejemplos])
         columna.change(al_cambiar_columna, [ejemplos, columna], info_ejemplos)
-        boton.click(ejecutar, [tarea, sensor, bandas, manual, imagen, grupos, ejemplos, columna, detalle, tamano],
+        boton.click(ejecutar, [tarea, sensor, bandas, manual, imagen, grupos, ejemplos, columna, detalle, tamano,
+                               suavizado],
                     [figura, informe, tabla, descargas])
     return app
 

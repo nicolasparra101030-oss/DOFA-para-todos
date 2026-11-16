@@ -17,6 +17,21 @@ class Resultado:
     extras: dict = field(default_factory=dict)
 
 
+def suavizar(mapa: np.ndarray, n_clases: int, tamano: int = 3, pasadas: int = 1) -> np.ndarray:
+    """Filtro de mayoría: cada celda toma la clase más común a su alrededor. Quita el efecto 'sal y pimienta'."""
+    from scipy.ndimage import uniform_filter
+
+    if n_clases < 2:
+        return mapa
+    resultado = mapa.copy()
+    validas = mapa != SIN_DATO
+    for _ in range(pasadas):
+        votos = np.stack([uniform_filter((resultado == c).astype("float32"), size=tamano, mode="nearest")
+                          for c in range(n_clases)])
+        resultado = np.where(validas, votos.argmax(axis=0), SIN_DATO).astype(mapa.dtype)
+    return resultado
+
+
 def _reducir(x: np.ndarray, dims: int = 50, semilla: int = 0):
     from sklearn.decomposition import PCA
 

@@ -125,3 +125,35 @@ def test_la_app_se_construye():
     import app
 
     assert app.crear_app() is not None
+
+
+def test_suavizado_quita_celdas_sueltas():
+    from dofa_para_todos.tareas import SIN_DATO, suavizar
+
+    mapa = np.zeros((7, 7), dtype="int16")
+    mapa[3, 3] = 1                       # celda suelta
+    mapa[0, :] = SIN_DATO
+    limpio = suavizar(mapa, 2)
+    assert limpio[3, 3] == 0
+    assert (limpio[0] == SIN_DATO).all()  # lo que no tiene datos sigue igual
+
+
+def test_celdas_del_borde_son_validas(tmp_path):
+    ruta = tmp_path / "borde.tif"
+    with rasterio.open(ruta, "w", driver="GTiff", height=40, width=34, count=3, dtype="float32",
+                       crs="EPSG:32618", transform=from_origin(0, 0, 4, 4)) as dst:
+        dst.write(np.ones((3, 40, 34), dtype="float32"))
+    img = imagenes.leer_imagen(str(ruta))
+    validas = imagenes.celdas_validas(img, 1)
+    assert validas.shape == (3, 3) and validas.all()   # la última columna solo tiene 2 píxeles, pero tiene datos
+
+
+def test_aviso_de_bandas_se_actualiza(imagen_sintetica):
+    import app
+
+    s = "PlanetScope (4 bandas)"
+    _, defecto = sensores.opciones_bandas(s)
+    texto, _ = app.al_cambiar_bandas(imagen_sintetica, s, defecto[:3], "")
+    assert "elegiste **3**" in texto
+    texto, _ = app.al_cambiar_bandas(imagen_sintetica, s, defecto, "")
+    assert "coincide" in texto

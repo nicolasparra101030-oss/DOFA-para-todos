@@ -14,7 +14,7 @@ MAX_CELDAS = 600_000   # límite para no agotar la memoria de Colab
 def ejecutar(ruta_imagen: str, ondas: list[float], tarea: str = AGRUPAR, radar: bool = False,
              detalle: int = 1, tamano: str = "base", grupos: int = 5, ruta_ejemplos: str | None = None,
              columna: str | None = None, carpeta: str = "resultados", progreso=None,
-             modelo=None, extractor=None) -> dict:
+             modelo=None, extractor=None, suavizado: int = 1) -> dict:
     """Ejecuta una tarea completa y devuelve las rutas de los archivos y el informe."""
     aviso = progreso or (lambda fraccion, texto="": None)
 
@@ -49,6 +49,8 @@ def ejecutar(ruta_imagen: str, ondas: list[float], tarea: str = AGRUPAR, radar: 
     else:
         res = tareas.agrupar(resumenes, validas, grupos)
         titulo = f"{grupos} grupos encontrados por DOFA"
+    if suavizado > 0:
+        res.mapa = tareas.suavizar(res.mapa, len(res.nombres), pasadas=suavizado)
 
     aviso(0.95, "Guardando resultados")
     os.makedirs(carpeta, exist_ok=True)

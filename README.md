@@ -67,7 +67,13 @@ líneas con el nombre, la descripción y la longitud de onda de cada banda.
 4. **Tarea A:** los resúmenes se agrupan con *k-means*. **Tarea B:** una regresión logística (la *cabeza de tarea*)
    aprende de tus polígonos; DOFA no se reentrena. La exactitud se estima con validación cruzada por polígonos.
 
+5. Un **filtro de mayoría** suaviza el mapa: cada celda toma la clase más común a su alrededor, lo que quita las celdas
+   sueltas (efecto "sal y pimienta"). Se puede desactivar en las opciones avanzadas.
+
 Con **más detalle** (opciones avanzadas), cada celda del mapa mide 8 × 8 o 4 × 4 píxeles, a cambio de más tiempo.
+
+**Consejos:** en ciudades o zonas muy variadas, usa de 4 a 6 grupos. Las nubes y sus sombras suelen formar sus
+propios grupos: es normal, y sirve para identificarlas.
 
 ## Limitaciones conocidas
 

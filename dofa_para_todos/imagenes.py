@@ -120,12 +120,19 @@ def malla_resultados(img: Imagen, detalle: int) -> tuple[int, int, Affine]:
 
 
 def celdas_validas(img: Imagen, detalle: int) -> np.ndarray:
-    """Una celda es válida si al menos la mitad de sus píxeles tiene datos."""
+    """Una celda es válida si al menos la mitad de sus píxeles dentro de la imagen tiene datos.
+
+    Las celdas del borde, que quedan en parte fuera de la imagen, se evalúan solo con su parte de adentro.
+    """
     celda = tamano_celda(detalle)
     filas, columnas, _ = malla_resultados(img, detalle)
-    m = np.zeros((filas * celda, columnas * celda), dtype="float32")
-    m[:img.alto, :img.ancho] = img.valida
-    return m.reshape(filas, celda, columnas, celda).mean(axis=(1, 3)) >= 0.5
+    validos = np.zeros((filas * celda, columnas * celda), dtype="float32")
+    dentro = np.zeros_like(validos)
+    validos[:img.alto, :img.ancho] = img.valida
+    dentro[:img.alto, :img.ancho] = 1
+    suma_validos = validos.reshape(filas, celda, columnas, celda).sum(axis=(1, 3))
+    suma_dentro = dentro.reshape(filas, celda, columnas, celda).sum(axis=(1, 3))
+    return suma_validos >= 0.5 * np.maximum(suma_dentro, 1)
 
 
 def area_celda_ha(img: Imagen, detalle: int) -> float:
