@@ -8,7 +8,7 @@ from . import imagenes, modelo as mod, resultados, tareas
 
 AGRUPAR = "Agrupar zonas parecidas (sin etiquetas)"
 CLASIFICAR = "Clasificar coberturas (con mis ejemplos)"
-MAX_CELDAS = 600_000   # límite para no agotar la memoria de Colab
+MAX_CELDAS = 300_000   # límite para no agotar la memoria de Colab
 
 
 def ejecutar(ruta_imagen: str, ondas: list[float], tarea: str = AGRUPAR, radar: bool = False,

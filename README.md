@@ -63,7 +63,10 @@ líneas con el nombre, la descripción y la longitud de onda de cada banda.
 1. Cada banda se normaliza (media 0, desviación 1).
 2. La imagen se corta en ventanas de 224 × 224 píxeles y cada ventana pasa por DOFA con las longitudes de onda de sus bandas.
 3. En lugar de un solo resumen por ventana, se toma el **resumen de cada parche de 16 × 16 píxeles**
-   (14 × 14 parches por ventana). Así el mapa es mucho más detallado.
+   (14 × 14 parches por ventana). Así el mapa es mucho más detallado. Cada resumen junta dos capas de los bloques
+   Transformer compartidos: una **intermedia**, que describe lo que hay en el propio parche, y la **última**, que
+   aporta el contexto de la ventana. Las ventanas se **superponen a la mitad** y se promedian, para que no se noten
+   sus bordes en el mapa.
 4. **Tarea A:** los resúmenes se agrupan con *k-means*. **Tarea B:** una regresión logística (la *cabeza de tarea*)
    aprende de tus polígonos; DOFA no se reentrena. La exactitud se estima con validación cruzada por polígonos.
 

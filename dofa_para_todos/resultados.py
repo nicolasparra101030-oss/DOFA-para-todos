@@ -13,10 +13,11 @@ PALETA = ["#1b7837", "#2166ac", "#e6ab02", "#d95f02", "#7570b3", "#e7298a",
 
 COLOR_POR_PALABRA = [
     (("agua", "rio", "río", "lago", "laguna", "mar", "water", "humedal", "cienaga", "ciénaga"), "#2166ac"),
-    (("bosque", "selva", "forest", "arbol", "árbol", "manglar"), "#1b7837"),
+    (("bosque", "selva", "forest", "arbol", "árbol", "manglar", "verde", "parque", "vegeta", "jard"), "#1b7837"),
+    (("vía", "via ", "vias", "vías", "carretera", "calle", "avenida", "road"), "#d7301f"),
     (("pasto", "potrero", "pastizal", "pradera", "sabana", "herbazal", "grass"), "#a6d96a"),
     (("cultivo", "crop", "arroz", "cafe", "café", "palma", "maiz", "maíz", "agric"), "#e6ab02"),
-    (("urbano", "ciudad", "construido", "edific", "vivienda", "urban", "industrial", "via", "vía", "carretera"), "#7f7f7f"),
+    (("urbano", "ciudad", "construido", "edific", "vivienda", "urban", "industrial"), "#7f7f7f"),
     (("suelo", "desnudo", "arena", "mineria", "minería", "bare", "roca"), "#a6761d"),
     (("nube", "cloud", "sombra"), "#d9d9d9"),
     (("paramo", "páramo", "arbusto", "matorral"), "#b8a2d6"),

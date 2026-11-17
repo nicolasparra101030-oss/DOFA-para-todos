@@ -81,9 +81,26 @@ def test_ventanas_y_malla(imagen_sintetica, detalle):
 
 def test_resumenes_por_parche(modelo_pequeno, imagen_sintetica):
     img = imagenes.leer_imagen(imagen_sintetica)
-    malla = mod.resumir_imagen(modelo_pequeno, imagenes.preparar(img), [0.49, 0.56, 0.665, 0.842], detalle=1)
-    assert malla.shape == (28, 28, 384)                # 2 × 2 ventanas de 14 × 14 parches
+    datos = imagenes.preparar(img)
+    malla = mod.resumir_imagen(modelo_pequeno, datos, [0.49, 0.56, 0.665, 0.842], detalle=1)
+    filas, columnas, _ = imagenes.malla_resultados(img, 1)
+    assert malla.shape[0] >= filas and malla.shape[1] >= columnas
+    assert malla.shape[2] == 2 * 384                   # capa intermedia + última capa
     assert np.isfinite(malla.astype("float32")).all()
+    sin_solapar = mod.resumir_imagen(modelo_pequeno, datos, [0.49, 0.56, 0.665, 0.842], superponer=False)
+    assert sin_solapar.shape == (28, 28, 768)          # 2 × 2 ventanas de 14 × 14 parches
+
+
+def test_posiciones_cubren_todo():
+    assert mod.posiciones(100, 224, 112) == [0]
+    p = mod.posiciones(1436, 224, 112)
+    assert p[0] == 0 and p[-1] + 224 >= 1436 and all(b - a == 112 for a, b in zip(p, p[1:]))
+
+
+def test_colores_por_nombre():
+    from dofa_para_todos.resultados import colores
+    c = colores(4, ["nube", "urbano", "vía", "zona verde"])
+    assert c[3] == "#1b7837" and c[2] == "#d7301f" and len(set(c)) == 4
 
 
 def test_flujo_agrupar(modelo_pequeno, imagen_sintetica, tmp_path):
