@@ -27,6 +27,7 @@ se abre desde Google Colab, con GPU gratuita.
 |---|---|---|
 | **A · Agrupar zonas parecidas** (sin etiquetas) | Solo la imagen | Un mapa con N grupos de zonas parecidas. Tú decides qué cobertura es cada grupo. |
 | **B · Clasificar coberturas** (con tus ejemplos) | La imagen + polígonos de ejemplo | Un mapa de coberturas con tus nombres, la exactitud estimada y un mapa de confianza. |
+| **C · Detectar cambios** entre dos fechas | Dos imágenes de la misma zona y el mismo sensor | Un mapa de intensidad del cambio, las zonas que cambiaron y sus hectáreas. |
 
 ## Qué preparar
 
@@ -36,6 +37,14 @@ se abre desde Google Colab, con GPU gratuita.
   [Copernicus Browser](https://browser.dataspace.copernicus.eu) o exportado desde QGIS o Google Earth Engine.
 - **Anota el orden de las bandas** del archivo: en la aplicación debes elegirlas en ese mismo orden.
 - Tamaño recomendado para empezar: entre 500 × 500 y 3000 × 3000 píxeles (con Sentinel-2, de 5 a 30 km de lado).
+
+### Las dos fechas (solo tarea C)
+
+- Dos GeoTIFF de **la misma zona**, del **mismo sensor** y con **las mismas bandas en el mismo orden**.
+- Lo ideal es que sean de la **misma época del año**: así los cambios de estación (pasto verde o seco, cultivos
+  sembrados o cosechados) no se confunden con cambios reales.
+- Evita las nubes: una nube o su sombra en una sola de las fechas aparece como cambio.
+- No tienen que coincidir píxel a píxel: la aplicación ajusta la segunda imagen a la grilla de la primera.
 
 ### Los ejemplos (solo tarea B)
 
@@ -67,7 +76,9 @@ líneas con el nombre, la descripción y la longitud de onda de cada banda.
    Transformer compartidos: una **intermedia**, que describe lo que hay en el propio parche, y la **última**, que
    aporta el contexto de la ventana. Las ventanas se **superponen a la mitad** y se promedian, para que no se noten
    sus bordes en el mapa.
-4. **Tarea A:** los resúmenes se agrupan con *k-means*. **Tarea B:** una regresión logística (la *cabeza de tarea*)
+4. **Tarea C:** las dos fechas se normalizan con las mismas estadísticas, DOFA resume cada una y se mide la
+   distancia coseno entre los resúmenes de cada celda. El umbral entre "cambio" y "sin cambio" se elige solo
+   (método de Otsu) y la sensibilidad lo mueve. **Tarea A:** los resúmenes se agrupan con *k-means*. **Tarea B:** una regresión logística (la *cabeza de tarea*)
    aprende de tus polígonos; DOFA no se reentrena. La exactitud se estima con validación cruzada por polígonos.
 
 5. Un **filtro de mayoría** suaviza el mapa: cada celda toma la clase más común a su alrededor, lo que quita las celdas

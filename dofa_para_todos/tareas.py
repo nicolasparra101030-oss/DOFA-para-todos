@@ -172,3 +172,50 @@ def clasificar(resumenes, validas, gdf, columna, transform, crs, semilla: int = 
     informe = (f"DOFA aprendió **{len(presentes)} coberturas** a partir de {len(np.unique(grupos))} ejemplos "
                f"({int(marcadas.sum())} celdas).\n\n{informe_validacion}{aviso}")
     return Resultado(mapa, nombres, informe, confianza)
+
+
+SENSIBILIDADES = {"Baja (solo cambios fuertes)": 1.25, "Media (recomendado)": 1.0, "Alta (detecta cambios sutiles)": 0.8}
+
+
+def umbral_otsu(valores: np.ndarray, bins: int = 256) -> float:
+    """Umbral automático que mejor separa dos grupos de valores (método de Otsu)."""
+    hist, bordes = np.histogram(valores, bins=bins)
+    centros = (bordes[:-1] + bordes[1:]) / 2
+    peso1 = np.cumsum(hist)
+    peso2 = peso1[-1] - peso1
+    media1 = np.cumsum(hist * centros) / np.maximum(peso1, 1)
+    media2 = (np.sum(hist * centros) - np.cumsum(hist * centros)) / np.maximum(peso2, 1)
+    varianza = peso1 * peso2 * (media1 - media2) ** 2
+    # Si varios cortes separan igual de bien (un hueco sin valores), se toma el punto medio del hueco
+    mejores = np.flatnonzero(varianza >= varianza.max() * (1 - 1e-9))
+    return float(centros[mejores].mean())
+
+
+def detectar_cambios(antes: np.ndarray, despues: np.ndarray, validas: np.ndarray,
+                     factor: float = 1.0) -> Resultado:
+    """Tarea C: compara los resúmenes de DOFA de dos fechas y marca las celdas que cambiaron.
+
+    La medida de cambio es la distancia coseno entre los resúmenes de cada celda: 0 si son iguales,
+    más alta cuanto más distinto se ve el lugar. El umbral se elige solo (método de Otsu) y la
+    sensibilidad lo mueve hacia arriba o hacia abajo.
+    """
+    a = antes[validas].astype("float32")
+    d = despues[validas].astype("float32")
+    a /= np.linalg.norm(a, axis=1, keepdims=True) + 1e-6
+    d /= np.linalg.norm(d, axis=1, keepdims=True) + 1e-6
+    distancia = 1 - (a * d).sum(axis=1)
+    if distancia.size < 2:
+        raise ValueError("Las dos imágenes casi no se superponen. Revisa que sean de la misma zona.")
+    umbral = umbral_otsu(distancia) * factor
+    mapa = np.full(validas.shape, SIN_DATO, dtype="int16")
+    mapa[validas] = (distancia > umbral).astype("int16")
+    intensidad = np.zeros(validas.shape, dtype="float32")
+    escala = np.percentile(distancia, 99) + 1e-6
+    intensidad[validas] = np.clip(distancia / escala, 0, 1)
+    porcentaje = 100 * (distancia > umbral).mean()
+    informe = (f"DOFA comparó las dos fechas y marcó como **cambio el {porcentaje:.1f} %** del área.\n\n"
+               "El mapa de intensidad muestra qué tan distinto se ve cada lugar entre una fecha y otra. "
+               "**Ojo:** las nubes, sus sombras y los cambios de estación (por ejemplo, pasto verde en lluvias y seco "
+               "en verano) también cuentan como cambio. Compara siempre con las imágenes.")
+    return Resultado(mapa, ["Sin cambio", "Cambio"], informe, confianza=intensidad,
+                     extras={"umbral": umbral, "distancia": distancia})

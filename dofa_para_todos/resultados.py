@@ -12,6 +12,8 @@ PALETA = ["#1b7837", "#2166ac", "#e6ab02", "#d95f02", "#7570b3", "#e7298a",
 
 
 COLOR_POR_PALABRA = [
+    (("sin cambio",), "#e0e0e0"),
+    (("cambio",), "#d7301f"),
     (("agua", "rio", "río", "lago", "laguna", "mar", "water", "humedal", "cienaga", "ciénaga"), "#2166ac"),
     (("bosque", "selva", "forest", "arbol", "árbol", "manglar", "verde", "parque", "vegeta", "jard"), "#1b7837"),
     (("vía", "via ", "vias", "vías", "carretera", "calle", "avenida", "road"), "#d7301f"),
@@ -105,4 +107,36 @@ def guardar_geotiff(res: Resultado, transform, crs, ruta: str) -> str:
         f.write("valor,cobertura,color\n")
         for i, (nombre, c) in enumerate(zip(res.nombres, colores(len(res.nombres), res.nombres))):
             f.write(f"{i},{nombre},{c}\n")
+    return ruta
+
+
+def figura_cambios(vista_antes: np.ndarray, vista_despues: np.ndarray, res: Resultado, ruta: str,
+                   celda: int) -> str:
+    """Cuatro paneles: antes, después, intensidad del cambio y cambios marcados sobre la imagen 'después'."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+    from matplotlib.patches import Patch
+
+    alto, ancho = vista_despues.shape[:2]
+    cambio = np.kron((res.mapa == 1).astype("uint8"), np.ones((celda, celda), dtype="uint8"))[:alto, :ancho]
+    superpuesta = vista_despues.copy()
+    rojo = np.array([0.84, 0.19, 0.12], dtype="float32")
+    superpuesta[cambio == 1] = 0.45 * superpuesta[cambio == 1] + 0.55 * rojo
+
+    fig, ejes = plt.subplots(1, 4, figsize=(26, 7))
+    ejes[0].imshow(vista_antes); ejes[0].set_title("Antes")
+    ejes[1].imshow(vista_despues); ejes[1].set_title("Después")
+    intensidad = np.where(res.mapa == SIN_DATO, np.nan, res.confianza)
+    im = ejes[2].imshow(intensidad, cmap="magma", vmin=0, vmax=1, interpolation="nearest")
+    ejes[2].set_title("Intensidad del cambio según DOFA")
+    fig.colorbar(im, ax=ejes[2], fraction=0.046)
+    ejes[3].imshow(superpuesta); ejes[3].set_title("Cambios detectados")
+    for e in ejes:
+        e.axis("off")
+    fig.legend(handles=[Patch(color="#d7301f", label="Cambio detectado")], loc="lower center", frameon=False,
+               fontsize=13)
+    fig.tight_layout(rect=(0, 0.06, 1, 0.96))
+    fig.savefig(ruta, dpi=110)
+    plt.close(fig)
     return ruta

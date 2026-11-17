@@ -99,12 +99,26 @@ def al_subir_imagen(archivo, sensor, elegidas, manual):
     except Exception as e:
         return f"⚠️ No pude leer la imagen: {e}", None, ""
     texto = imagenes.describir(img) + _revisar_bandas(ruta, img, sensor, elegidas, manual)
-    vista = (imagenes.vista_color(img) * 255).astype(np.uint8)
+    try:
+        ondas = _ondas(sensor, elegidas, manual, ruta)
+    except Exception:
+        ondas = None
+    vista = (imagenes.vista_color(img, ondas=ondas) * 255).astype(np.uint8)
     return texto, vista, _tabla_bandas(sensor, elegidas, manual, ruta)
 
 
+def al_subir_imagen2(archivo, sensor, elegidas, manual):
+    """Imagen 'después' de la tarea de cambios: misma revisión que la primera."""
+    texto, vista, _ = al_subir_imagen(archivo, sensor, elegidas, manual)
+    return texto, vista
+
+
 def al_cambiar_tarea(tarea):
-    return gr.update(visible=tarea == flujo.AGRUPAR), gr.update(visible=tarea == flujo.CLASIFICAR)
+    cambios = tarea == flujo.CAMBIOS
+    return (gr.update(visible=tarea == flujo.AGRUPAR), gr.update(visible=tarea == flujo.CLASIFICAR),
+            gr.update(visible=cambios), gr.update(visible=cambios),
+            gr.update(label="Imagen de antes" if cambios else "Imagen"),
+            "### 3 · Sube tus dos imágenes (GeoTIFF): antes y después" if cambios else "### 3 · Sube tu imagen (GeoTIFF)")
 
 
 def al_subir_ejemplos(archivo):
@@ -137,7 +151,8 @@ def al_cambiar_columna(archivo, columna):
 
 
 def ejecutar(tarea, sensor, elegidas, manual, archivo, grupos, ejemplos, columna, detalle, tamano,
-             suavizado="Suave (recomendado)", progress=gr.Progress()):
+             suavizado="Suave (recomendado)", archivo2=None, sensibilidad="Media (recomendado)",
+             progress=gr.Progress()):
     ruta = _ruta(archivo)
     if not ruta:
         raise gr.Error("Falta la imagen (paso 3).")
@@ -148,7 +163,8 @@ def ejecutar(tarea, sensor, elegidas, manual, archivo, grupos, ejemplos, columna
         salida = flujo.ejecutar(
             ruta, ondas, tarea=tarea, radar=sensores.es_radar(sensor), detalle=DETALLES[detalle],
             tamano=TAMANOS[tamano], grupos=int(grupos), ruta_ejemplos=_ruta(ejemplos), columna=columna,
-            suavizado=SUAVIZADOS[suavizado],
+            suavizado=SUAVIZADOS[suavizado], ruta_imagen2=_ruta(archivo2),
+            sensibilidad=tareas.SENSIBILIDADES[sensibilidad],
             progreso=lambda f, texto="": progress(f, desc=texto))
     except ValueError as e:
         raise gr.Error(str(e))
@@ -165,7 +181,7 @@ def crear_app() -> gr.Blocks:
 
         with gr.Group():
             gr.Markdown("### 1 · ¿Qué quieres hacer?")
-            tarea = gr.Radio([flujo.AGRUPAR, flujo.CLASIFICAR], value=flujo.AGRUPAR, show_label=False)
+            tarea = gr.Radio(flujo.TAREAS, value=flujo.AGRUPAR, show_label=False)
 
         with gr.Group():
             gr.Markdown("### 2 · ¿De qué sensor es tu imagen y qué bandas tiene?")
@@ -182,11 +198,17 @@ def crear_app() -> gr.Blocks:
                 tabla_bandas = gr.Markdown(_tabla_bandas(sensor_inicial, defecto, "", None))
 
         with gr.Group():
-            gr.Markdown("### 3 · Sube tu imagen (GeoTIFF)")
+            titulo_paso3 = gr.Markdown("### 3 · Sube tu imagen (GeoTIFF)")
             with gr.Row():
                 imagen = gr.File(label="Imagen", file_types=[".tif", ".tiff"])
                 vista = gr.Image(label="Vista previa", interactive=False, height=280)
             info_imagen = gr.Markdown()
+            with gr.Column(visible=False) as fila_imagen2:
+                with gr.Row():
+                    imagen2 = gr.File(label="Imagen de después", file_types=[".tif", ".tiff"])
+                    vista2 = gr.Image(label="Vista previa (después)", interactive=False, height=280)
+                info_imagen2 = gr.Markdown("Debe ser del mismo sensor, con las mismas bandas y en el mismo orden. "
+                                           "Si no coincide exactamente con la primera, se ajusta sola a su grilla.")
 
         with gr.Group():
             gr.Markdown("### 4 · Opciones de la tarea")
@@ -199,6 +221,11 @@ def crear_app() -> gr.Blocks:
                                    file_types=[".geojson", ".json", ".gpkg", ".kml", ".zip"])
                 columna = gr.Dropdown([], label="Columna con el nombre de la cobertura")
                 info_ejemplos = gr.Markdown()
+            with gr.Column(visible=False) as caja_cambios:
+                sensibilidad = gr.Radio(list(tareas.SENSIBILIDADES), value="Media (recomendado)",
+                                        label="Sensibilidad",
+                                        info="Con más sensibilidad se marcan cambios más sutiles, pero también más "
+                                             "falsas alarmas (nubes, sombras, cambios de estación).")
             with gr.Accordion("Opciones avanzadas", open=False):
                 detalle = gr.Radio(list(DETALLES), value="Normal (más rápido)", label="Nivel de detalle del mapa",
                                    info="Con 'Normal', cada celda del mapa mide 16 × 16 píxeles de la imagen.")
@@ -221,11 +248,13 @@ def crear_app() -> gr.Blocks:
         for comp in (sensor, bandas, manual):
             comp.change(al_cambiar_bandas, [imagen, sensor, bandas, manual], [info_imagen, tabla_bandas])
         imagen.change(al_subir_imagen, [imagen, sensor, bandas, manual], [info_imagen, vista, tabla_bandas])
-        tarea.change(al_cambiar_tarea, tarea, [caja_agrupar, caja_clasificar])
+        tarea.change(al_cambiar_tarea, tarea, [caja_agrupar, caja_clasificar, caja_cambios, fila_imagen2, imagen,
+                                               titulo_paso3])
+        imagen2.change(al_subir_imagen2, [imagen2, sensor, bandas, manual], [info_imagen2, vista2])
         ejemplos.change(al_subir_ejemplos, ejemplos, [columna, info_ejemplos])
         columna.change(al_cambiar_columna, [ejemplos, columna], info_ejemplos)
         boton.click(ejecutar, [tarea, sensor, bandas, manual, imagen, grupos, ejemplos, columna, detalle, tamano,
-                               suavizado],
+                               suavizado, imagen2, sensibilidad],
                     [figura, informe, tabla, descargas])
     return app
 

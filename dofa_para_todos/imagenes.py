@@ -52,34 +52,99 @@ def describir(img: Imagen) -> str:
             f"{img.valida.mean() * 100:.0f} % de píxeles con datos")
 
 
-def vista_color(img: Imagen, indices: tuple[int, int, int] | None = None) -> np.ndarray:
-    """Imagen RGB (alto, ancho, 3) entre 0 y 1 para mostrar en pantalla."""
+def indices_color(ondas: list[float] | None, bandas: int) -> tuple[int, int, int]:
+    """Elige las bandas más cercanas al rojo, verde y azul según sus longitudes de onda.
+
+    Si las longitudes de onda están en otro orden que el archivo, la vista previa saldrá con colores raros:
+    así el usuario nota el error.
+    """
+    if ondas and len(ondas) == bandas and min(ondas) < 0.7:
+        return tuple(int(np.argmin([abs(o - objetivo) for o in ondas])) for objetivo in (0.665, 0.56, 0.49))
+    return (0, 1, 2) if bandas >= 3 else (0, 0, 0)
+
+
+def vista_color(img: Imagen, indices: tuple[int, int, int] | None = None,
+                ondas: list[float] | None = None, limites=None) -> np.ndarray:
+    """Imagen RGB (alto, ancho, 3) entre 0 y 1 para mostrar en pantalla.
+
+    `limites` (bajo, alto por canal) permite mostrar dos fechas con la misma escala de brillo.
+    """
     if indices is None:
-        indices = (0, 1, 2) if img.bandas >= 3 else (0, 0, 0)
+        indices = indices_color(ondas, img.bandas)
     rgb = np.stack([img.datos[i] for i in indices], axis=-1).astype("float32")
     for c in range(3):
         canal = rgb[..., c]
-        vals = canal[img.valida]
-        if vals.size:
+        if limites is not None:
+            bajo, alto = limites[c]
+        else:
+            vals = canal[img.valida]
+            if not vals.size:
+                continue
             bajo, alto = np.percentile(vals, [2, 98])
-            rgb[..., c] = np.clip((canal - bajo) / (alto - bajo + 1e-9), 0, 1)
+        rgb[..., c] = np.clip((canal - bajo) / (alto - bajo + 1e-9), 0, 1)
     rgb[~img.valida] = 0
     return rgb
 
 
-def preparar(img: Imagen, radar: bool = False) -> np.ndarray:
-    """Pone cada banda en una escala común (media 0, desviación 1), con valores extremos recortados."""
-    datos = img.datos.copy()
+def vistas_comparables(img1: Imagen, img2: Imagen, ondas1, ondas2) -> tuple[np.ndarray, np.ndarray]:
+    """Vistas de dos fechas con la misma escala de brillo, para compararlas a simple vista."""
+    i1, i2 = indices_color(ondas1, img1.bandas), indices_color(ondas2, img2.bandas)
+    limites = []
+    for c in range(3):
+        vals = np.concatenate([img1.datos[i1[c]][img1.valida], img2.datos[i2[c]][img2.valida]])
+        limites.append(tuple(np.percentile(vals, [2, 98])) if vals.size else (0.0, 1.0))
+    return (vista_color(img1, i1, limites=limites), vista_color(img2, i2, limites=limites))
+
+
+def alinear(img: Imagen, ref: Imagen) -> Imagen:
+    """Reproyecta una imagen a la misma grilla (sistema de coordenadas, tamaño y píxel) que la de referencia."""
+    from rasterio.warp import Resampling, reproject
+
+    misma = (img.crs == ref.crs and img.transform == ref.transform and img.datos.shape[1:] == ref.datos.shape[1:])
+    if misma:
+        return img
+    datos = np.zeros((img.bandas, ref.alto, ref.ancho), dtype="float32")
+    for b in range(img.bandas):
+        reproject(img.datos[b], datos[b], src_transform=img.transform, src_crs=img.crs,
+                  dst_transform=ref.transform, dst_crs=ref.crs, resampling=Resampling.bilinear)
+    valida = np.zeros((ref.alto, ref.ancho), dtype="uint8")
+    reproject(img.valida.astype("uint8"), valida, src_transform=img.transform, src_crs=img.crs,
+              dst_transform=ref.transform, dst_crs=ref.crs, resampling=Resampling.nearest, dst_nodata=0)
+    return Imagen(datos, valida.astype(bool), ref.transform, ref.crs, img.ruta)
+
+
+def _valores(img: Imagen, radar: bool) -> np.ndarray:
+    datos = img.datos
     if radar and np.nanmedian(datos[:, img.valida]) > 0:
         datos = 10 * np.log10(np.clip(datos, 1e-6, None))     # radar lineal → decibeles
-    for b in range(datos.shape[0]):
-        vals = datos[b][img.valida]
+    return datos
+
+
+def estadisticas(imgs: list[Imagen], radar: bool = False) -> list[tuple[float, float, float, float]]:
+    """Por banda: (mínimo, máximo, media, desviación) tras recortar extremos, con los píxeles de todas las imágenes."""
+    salida = []
+    datos = [_valores(i, radar) for i in imgs]
+    for b in range(imgs[0].bandas):
+        vals = np.concatenate([d[b][i.valida] for d, i in zip(datos, imgs)])
         if vals.size == 0:
+            salida.append((0.0, 1.0, 0.0, 1.0))
             continue
         bajo, alto = np.percentile(vals, [1, 99])
-        banda = np.clip(datos[b], bajo, alto)
-        recortados = banda[img.valida]
-        datos[b] = (banda - recortados.mean()) / (recortados.std() + 1e-6)
+        recortados = np.clip(vals, bajo, alto)
+        salida.append((float(bajo), float(alto), float(recortados.mean()), float(recortados.std()) + 1e-6))
+    return salida
+
+
+def preparar(img: Imagen, radar: bool = False, stats=None) -> np.ndarray:
+    """Pone cada banda en una escala común (media 0, desviación 1), con valores extremos recortados.
+
+    Para comparar dos fechas hay que pasar las mismas `stats` a las dos imágenes (ver `estadisticas`):
+    si cada una se normaliza por su cuenta, un cambio en una parte altera la escala de toda la imagen.
+    """
+    stats = stats or estadisticas([img], radar)
+    datos = _valores(img, radar).copy()
+    for b, (bajo, alto, media, desv) in enumerate(stats):
+        datos[b] = (np.clip(datos[b], bajo, alto) - media) / desv
     datos[:, ~img.valida] = 0
     return datos.astype("float32")
 

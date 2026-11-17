@@ -174,3 +174,56 @@ def test_aviso_de_bandas_se_actualiza(imagen_sintetica):
     assert "elegiste **3**" in texto
     texto, _ = app.al_cambiar_bandas(imagen_sintetica, s, defecto, "")
     assert "coincide" in texto
+
+
+def _guardar(ruta, datos, transform):
+    with rasterio.open(ruta, "w", driver="GTiff", height=datos.shape[1], width=datos.shape[2], count=datos.shape[0],
+                       dtype="float32", crs="EPSG:32618", transform=transform) as dst:
+        dst.write(datos)
+    return str(ruta)
+
+
+@pytest.fixture()
+def par_de_fechas(tmp_path):
+    """Dos fechas de la misma zona: en la de después, un cuadro de 'bosque' pasa a 'suelo desnudo'."""
+    rng = np.random.default_rng(3)
+    alto = ancho = 512                                # grande, para que haya ventanas lejos del cambio
+    antes = rng.normal(800, 40, (4, alto, ancho)).astype("float32")
+    antes += np.array([100, 300, 200, 2500])[:, None, None]                 # todo bosque
+    despues = antes + rng.normal(0, 40, antes.shape).astype("float32")
+    despues[:, 96:224, 96:224] = rng.normal([[[1500]], [[1700]], [[1900]], [[2100]]], 40, (4, 128, 128))
+    # La imagen de después está corrida 2 píxeles: la aplicación debe alinearla sola
+    t_antes = from_origin(500000, 100000, 10, 10)
+    t_despues = from_origin(500020, 100000, 10, 10)
+    despues_corrida = np.zeros_like(despues)
+    despues_corrida[:, :, :-2] = despues[:, :, 2:]
+    return (_guardar(tmp_path / "antes.tif", antes, t_antes),
+            _guardar(tmp_path / "despues.tif", despues_corrida, t_despues))
+
+
+def test_flujo_cambios(modelo_pequeno, par_de_fechas, tmp_path):
+    antes, despues = par_de_fechas
+    salida = flujo.ejecutar(antes, [0.49, 0.56, 0.665, 0.842], tarea=flujo.CAMBIOS, ruta_imagen2=despues,
+                            carpeta=str(tmp_path / "res"), modelo=modelo_pequeno, suavizado=0)
+    res = salida["resultado"]
+    assert res.nombres == ["Sin cambio", "Cambio"]
+    intensidad = res.confianza
+    dentro = intensidad[7:13, 7:13].mean()          # celdas de 16 px dentro del cuadro que cambió
+    fuera = intensidad[-8:-1, -8:-1].mean()         # esquina lejos del cambio
+    assert dentro > fuera
+    assert res.mapa[8:12, 8:12].mean() > res.mapa[-8:-1, -8:-1].mean()
+    for ruta in salida["archivos"].values():
+        assert os.path.exists(ruta)
+
+
+def test_umbral_otsu_separa_dos_grupos():
+    from dofa_para_todos.tareas import umbral_otsu
+    valores = np.concatenate([np.random.default_rng(0).normal(0.1, 0.02, 500),
+                              np.random.default_rng(1).normal(0.6, 0.05, 100)])
+    assert 0.2 < umbral_otsu(valores) < 0.5
+
+
+def test_vista_usa_las_longitudes_de_onda():
+    assert imagenes.indices_color([0.49, 0.56, 0.665], 3) == (2, 1, 0)
+    assert imagenes.indices_color([0.665, 0.56, 0.49, 0.842], 4) == (0, 1, 2)
+    assert imagenes.indices_color(None, 3) == (0, 1, 2)
